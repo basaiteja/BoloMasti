@@ -1,0 +1,3 @@
+# BoloMasti
+
+Initial project setup.
