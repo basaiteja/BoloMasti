@@ -1,3 +1,3 @@
 # BoloMasti
 
-Initial project setup.
+Random chat, voice call & video call app.
