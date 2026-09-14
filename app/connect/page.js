@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { GoogleAuthProvider, onAuthStateChanged, signInAnonymously, signInWithPopup, signOut } from "firebase/auth";
 import { addDoc, collection, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
-import { auth, db, storage } from "../../lib/firebase";
+import { auth, db, firebaseReady, storage } from "../../lib/firebase";
 import "./connect.css";
 
 const interests = ["Music", "Movies", "Gaming", "Food", "Travel", "Books", "Fitness", "Art", "Memes", "Tech"];
@@ -18,12 +18,15 @@ export default function Connect() {
   const queueRef = useRef(null), unsubMessages = useRef(null), peer = useRef(null), localVideo = useRef(null), remoteVideo = useRef(null);
 
   const say = (value) => { setNotice(value); setTimeout(() => setNotice(""), 3500); };
-  useEffect(() => onAuthStateChanged(auth, async (next) => {
-    setUser(next || null);
-    if (!next) return setView("welcome");
-    const snap = await getDoc(doc(db, "users", next.uid));
-    if (snap.exists()) { setProfile(snap.data()); setView("lobby"); } else setView("profile");
-  }), []);
+  useEffect(() => {
+    if (!firebaseReady || !auth) { setView("setup"); return; }
+    return onAuthStateChanged(auth, async (next) => {
+      setUser(next || null);
+      if (!next) return setView("welcome");
+      const snap = await getDoc(doc(db, "users", next.uid));
+      if (snap.exists()) { setProfile(snap.data()); setView("lobby"); } else setView("profile");
+    });
+  }, []);
   useEffect(() => () => { queueRef.current?.(); unsubMessages.current?.(); peer.current?.close(); }, []);
   useEffect(() => {
     if (!match) return;
@@ -71,6 +74,7 @@ export default function Connect() {
   const endCall = () => { peer.current?.getSenders().forEach(s => s.track?.stop()); peer.current?.close(); peer.current = null; setCall(false); };
 
   if (view === "loading") return <div className="screen loading">Loading BoloMasti…</div>;
+  if (view === "setup") return <div className="screen welcome"><a className="brand" href="/">bolo<em>masti</em><b>.</b></a><div className="welcome-card"><p className="tag">ONE SMALL SETUP STEP</p><h1>Firebase needs<br /><em>your Netlify variables.</em></h1><p>Add the six <code>NEXT_PUBLIC_FIREBASE_…</code> variables in Netlify, then redeploy this site.</p><a className="primary" href="/">Back to home</a></div></div>;
   if (view === "welcome") return <div className="screen welcome"><a className="brand" href="/">bolo<em>masti</em><b>.</b></a><div className="welcome-card"><p className="tag">A LITTLE HELLO CAN CHANGE YOUR DAY</p><h1>Come for a chat.<br /><em>Stay for the masti.</em></h1><p>Meet someone new in a space built for good conversations.</p><button className="primary" onClick={() => login(false)}>Continue with Google</button><button className="secondary" onClick={() => login(true)}>Continue as guest</button><small>By continuing, you agree to be kind and keep BoloMasti safe.</small></div></div>;
   if (view === "profile") return <div className="screen onboarding"><a className="brand" href="/">bolo<em>masti</em><b>.</b></a><form className="profile-card" onSubmit={saveProfile}><p className="tag">LET’S SET YOUR VIBE</p><h2>A little about <em>you.</em></h2><label>Name<input maxLength="28" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="What should we call you?" /></label><label>Short bio <span>(optional)</span><textarea maxLength="160" value={form.bio} onChange={e=>setForm({...form,bio:e.target.value})} placeholder="The kind of conversation you love…" /></label><label>Choose your interests</label><div className="chips">{interests.map(x=><button type="button" onClick={()=>toggleInterest(x)} className={form.interests.includes(x)?"selected":""} key={x}>{x}</button>)}</div><button className="primary" type="submit">Find my people →</button></form></div>;
   return <div className="app-shell"><aside><a className="brand" href="/">bolo<em>masti</em><b>.</b></a><div className="me"><div className="avatar">{profile?.name?.[0]}</div><div><b>{profile?.name}</b><small>{profile?.interests?.slice(0,2).join(" · ")}</small></div></div><nav><button className={view==="lobby"||view==="matching"?"active":""} onClick={()=>{leaveQueue();setView("lobby")}}>✦ Discover</button><button onClick={requestNotifications}>♟ Notifications</button><button onClick={()=>signOut(auth)}>↪ Sign out</button></nav><small className="safety-note">Your comfort comes first.<br />Report or leave any conversation.</small></aside><section className="app-main">{view === "lobby" || view === "matching" ? <div className="lobby"><div className="orb">✦</div><p className="tag">READY WHEN YOU ARE</p><h1>{view === "matching" ? "Looking for your next good conversation…" : <>Your kind of <em>people</em> are out there.</>}</h1><p>{view === "matching" ? "We’re checking the room for someone with your vibe." : "Tell us when you’re ready and we’ll introduce you to someone new."}</p>{view === "matching" ? <button className="secondary" onClick={leaveQueue}>Cancel search</button> : <button className="primary" onClick={startMatching}>Find someone to chat with →</button>}<div className="interest-row">{profile?.interests?.map(x=><span key={x}>#{x}</span>)}</div></div> : <div className="chat"><header><button className="back" onClick={()=>{unsubMessages.current?.();setView("lobby")}}>←</button><div className="avatar">{match?.name?.[0]}</div><div><b>{match?.name}</b><small>New conversation · be kind</small></div><div className="chat-actions"><button onClick={startCall}>◉ Video call</button><button onClick={()=>setReporting(true)}>•••</button></div></header><div className="messages"><p className="system">You matched! Say hello and see where it goes.</p>{messages.map(m=><div className={m.senderId===user.uid?"message mine":"message"} key={m.id}>{m.imageUrl?<img src={m.imageUrl} alt="Shared in chat" />:<span>{m.text}</span>}<small>{m.createdAt?.toDate ? m.createdAt.toDate().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : now()}</small></div>)}</div><form className="composer" onSubmit={send}><label className="upload">＋<input type="file" accept="image/*" onChange={upload}/></label><input value={text} onChange={e=>setText(e.target.value)} placeholder="Say something nice…" /><button className="send" aria-label="Send">↑</button></form></div>}</section>{reporting&&<div className="modal"><div><button className="close" onClick={()=>setReporting(false)}>×</button><p className="tag">SAFETY FIRST</p><h2>What happened?</h2><button onClick={()=>report("Inappropriate content")}>Inappropriate content</button><button onClick={()=>report("Harassment or bullying")}>Harassment or bullying</button><button onClick={()=>report("Spam or scam")}>Spam or scam</button><button className="danger" onClick={block}>Block this person</button></div></div>}{call&&<div className="call"><video ref={remoteVideo} autoPlay playsInline/><video ref={localVideo} autoPlay muted playsInline className="local-video"/><button onClick={endCall}>End call</button></div>}{notice&&<div className="toast">{notice}</div>}</div>;
