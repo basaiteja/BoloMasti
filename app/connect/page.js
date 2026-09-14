@@ -1,0 +1,77 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { GoogleAuthProvider, onAuthStateChanged, signInAnonymously, signInWithPopup, signOut } from "firebase/auth";
+import { addDoc, collection, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
+import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
+import { auth, db, storage } from "../../lib/firebase";
+import "./connect.css";
+
+const interests = ["Music", "Movies", "Gaming", "Food", "Travel", "Books", "Fitness", "Art", "Memes", "Tech"];
+const now = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+export default function Connect() {
+  const [user, setUser] = useState(null), [profile, setProfile] = useState(null), [view, setView] = useState("loading");
+  const [form, setForm] = useState({ name: "", bio: "", interests: [] });
+  const [match, setMatch] = useState(null), [messages, setMessages] = useState([]), [text, setText] = useState("");
+  const [notice, setNotice] = useState(""), [reporting, setReporting] = useState(false), [call, setCall] = useState(false), [incomingCall, setIncomingCall] = useState(false);
+  const queueRef = useRef(null), unsubMessages = useRef(null), peer = useRef(null), localVideo = useRef(null), remoteVideo = useRef(null);
+
+  const say = (value) => { setNotice(value); setTimeout(() => setNotice(""), 3500); };
+  useEffect(() => onAuthStateChanged(auth, async (next) => {
+    setUser(next || null);
+    if (!next) return setView("welcome");
+    const snap = await getDoc(doc(db, "users", next.uid));
+    if (snap.exists()) { setProfile(snap.data()); setView("lobby"); } else setView("profile");
+  }), []);
+  useEffect(() => () => { queueRef.current?.(); unsubMessages.current?.(); peer.current?.close(); }, []);
+  useEffect(() => {
+    if (!match) return;
+    return onSnapshot(doc(db, "calls", match.id), snap => {
+      const data = snap.data();
+      if (data?.offer && !data.answer && data.calleeId === user.uid) setIncomingCall(true);
+    });
+  }, [match, user]);
+
+  const login = async (guest = false) => {
+    try { guest ? await signInAnonymously(auth) : await signInWithPopup(auth, new GoogleAuthProvider()); }
+    catch (e) { say(e.code === "auth/operation-not-allowed" ? "Enable this sign-in method in Firebase Authentication." : "Sign-in could not be completed. Please try again."); }
+  };
+  const saveProfile = async (e) => {
+    e.preventDefault(); if (!form.name.trim() || !form.interests.length) return say("Add a name and at least one interest.");
+    const data = { uid: user.uid, name: form.name.trim(), bio: form.bio.trim(), interests: form.interests, photoURL: user.photoURL || "", createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
+    await setDoc(doc(db, "users", user.uid), data, { merge: true }); setProfile({ ...data, createdAt: new Date() }); setView("lobby");
+  };
+  const toggleInterest = (value) => setForm(f => ({ ...f, interests: f.interests.includes(value) ? f.interests.filter(i => i !== value) : [...f.interests, value] }));
+  const leaveQueue = async () => { queueRef.current?.(); queueRef.current = null; await setDoc(doc(db, "matchQueue", user.uid), { status: "left", updatedAt: serverTimestamp() }, { merge: true }); setView("lobby"); };
+  const startMatching = async () => {
+    setView("matching");
+    try {
+      const candidates = await getDocs(query(collection(db, "matchQueue"), where("status", "==", "waiting"), limit(12)));
+      const other = candidates.docs.find(d => d.id !== user.uid && !profile.blocked?.includes(d.id));
+      if (other) { await openMatch(other.id, other.data()); return; }
+      await setDoc(doc(db, "matchQueue", user.uid), { uid: user.uid, name: profile.name, interests: profile.interests, photoURL: profile.photoURL || "", status: "waiting", updatedAt: serverTimestamp() });
+      queueRef.current = onSnapshot(doc(db, "matchQueue", user.uid), async snap => { const data = snap.data(); if (data?.matchId) { queueRef.current?.(); await openConversation(data.matchId); } });
+    } catch { say("Matching is unavailable until Firestore is enabled and its rules are published."); setView("lobby"); }
+  };
+  const openMatch = async (otherUid, other) => {
+    const ids = [user.uid, otherUid].sort(), id = ids.join("_");
+    await setDoc(doc(db, "conversations", id), { members: ids, participantInfo: { [user.uid]: { name: profile.name, photoURL: profile.photoURL || "" }, [otherUid]: { name: other.name, photoURL: other.photoURL || "" } }, updatedAt: serverTimestamp(), createdAt: serverTimestamp() }, { merge: true });
+    await updateDoc(doc(db, "matchQueue", otherUid), { status: "matched", matchId: id });
+    await setDoc(doc(db, "matchQueue", user.uid), { status: "matched", matchId: id }, { merge: true }); await openConversation(id);
+  };
+  const openConversation = async (id) => { const snap = await getDoc(doc(db, "conversations", id)); const data = snap.data(); const otherId = data.members.find(id => id !== user.uid); setMatch({ id, otherId, ...(data.participantInfo?.[otherId] || { name: "New friend" }) }); setView("chat"); unsubMessages.current?.(); unsubMessages.current = onSnapshot(query(collection(db, "conversations", id, "messages"), orderBy("createdAt", "asc")), s => setMessages(s.docs.map(x => ({ id: x.id, ...x.data() })))); };
+  const send = async (e) => { e.preventDefault(); const value = text.trim(); if (!value || !match) return; setText(""); await addDoc(collection(db, "conversations", match.id, "messages"), { text: value, senderId: user.uid, type: "text", createdAt: serverTimestamp() }); await updateDoc(doc(db, "conversations", match.id), { updatedAt: serverTimestamp(), lastMessage: value }); };
+  const upload = async (e) => { const file = e.target.files?.[0]; if (!file || !match) return; if (file.size > 5 * 1024 * 1024) return say("Please choose an image under 5 MB."); try { const location = ref(storage, `chat-media/${match.id}/${user.uid}-${Date.now()}-${file.name}`); await uploadBytes(location, file); const url = await getDownloadURL(location); await addDoc(collection(db, "conversations", match.id, "messages"), { imageUrl: url, senderId: user.uid, type: "image", createdAt: serverTimestamp() }); } catch { say("Upload failed. Enable Firebase Storage and publish its rules."); } };
+  const report = async (reason) => { await addDoc(collection(db, "reports"), { reporterId: user.uid, reportedUserId: match.otherId, conversationId: match.id, reason, status: "open", createdAt: serverTimestamp() }); setReporting(false); say("Thanks — your report has been sent to the safety team."); };
+  const block = async () => { await setDoc(doc(db, "users", user.uid), { blocked: [...(profile.blocked || []), match.otherId] }, { merge: true }); setProfile(p => ({ ...p, blocked: [...(p.blocked || []), match.otherId] })); say("This person is blocked. You won’t be matched again."); setMatch(null); setView("lobby"); };
+  const requestNotifications = async () => { if (!("Notification" in window)) return say("Notifications aren’t supported by this browser."); const result = await Notification.requestPermission(); say(result === "granted" ? "Notifications are on." : "Notifications are off."); };
+  const startCall = async () => { try { const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true }); localVideo.current.srcObject = stream; const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] }); peer.current = pc; stream.getTracks().forEach(t => pc.addTrack(t, stream)); pc.ontrack = e => { remoteVideo.current.srcObject = e.streams[0]; }; const callDoc = doc(db, "calls", match.id), candidates = collection(callDoc, "offerCandidates"); pc.onicecandidate = e => e.candidate && addDoc(candidates, e.candidate.toJSON()); const offer = await pc.createOffer(); await pc.setLocalDescription(offer); await setDoc(callDoc, { callerId: user.uid, calleeId: match.otherId, offer: { type: offer.type, sdp: offer.sdp }, status: "calling", createdAt: serverTimestamp() }); onSnapshot(callDoc, s => { const d = s.data(); if (d?.answer && !pc.currentRemoteDescription) pc.setRemoteDescription(new RTCSessionDescription(d.answer)); }); setCall(true); } catch { say("Camera or microphone access was denied, or your browser does not support calls."); } };
+  const answerCall = async () => { try { const data = (await getDoc(doc(db, "calls", match.id))).data(); const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true }); localVideo.current.srcObject = stream; const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] }); peer.current = pc; stream.getTracks().forEach(t => pc.addTrack(t, stream)); pc.ontrack = e => { remoteVideo.current.srcObject = e.streams[0]; }; const callDoc = doc(db, "calls", match.id); pc.onicecandidate = e => e.candidate && addDoc(collection(callDoc, "answerCandidates"), e.candidate.toJSON()); await pc.setRemoteDescription(new RTCSessionDescription(data.offer)); const answer = await pc.createAnswer(); await pc.setLocalDescription(answer); await updateDoc(callDoc, { answer: { type: answer.type, sdp: answer.sdp }, status: "connected" }); onSnapshot(collection(callDoc, "offerCandidates"), s => s.docChanges().forEach(c => c.type === "added" && pc.addIceCandidate(new RTCIceCandidate(c.doc.data())))); setIncomingCall(false); setCall(true); } catch { say("Couldn’t accept this call. Check camera and microphone access."); } };
+  const endCall = () => { peer.current?.getSenders().forEach(s => s.track?.stop()); peer.current?.close(); peer.current = null; setCall(false); };
+
+  if (view === "loading") return <div className="screen loading">Loading BoloMasti…</div>;
+  if (view === "welcome") return <div className="screen welcome"><a className="brand" href="/">bolo<em>masti</em><b>.</b></a><div className="welcome-card"><p className="tag">A LITTLE HELLO CAN CHANGE YOUR DAY</p><h1>Come for a chat.<br /><em>Stay for the masti.</em></h1><p>Meet someone new in a space built for good conversations.</p><button className="primary" onClick={() => login(false)}>Continue with Google</button><button className="secondary" onClick={() => login(true)}>Continue as guest</button><small>By continuing, you agree to be kind and keep BoloMasti safe.</small></div></div>;
+  if (view === "profile") return <div className="screen onboarding"><a className="brand" href="/">bolo<em>masti</em><b>.</b></a><form className="profile-card" onSubmit={saveProfile}><p className="tag">LET’S SET YOUR VIBE</p><h2>A little about <em>you.</em></h2><label>Name<input maxLength="28" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="What should we call you?" /></label><label>Short bio <span>(optional)</span><textarea maxLength="160" value={form.bio} onChange={e=>setForm({...form,bio:e.target.value})} placeholder="The kind of conversation you love…" /></label><label>Choose your interests</label><div className="chips">{interests.map(x=><button type="button" onClick={()=>toggleInterest(x)} className={form.interests.includes(x)?"selected":""} key={x}>{x}</button>)}</div><button className="primary" type="submit">Find my people →</button></form></div>;
+  return <div className="app-shell"><aside><a className="brand" href="/">bolo<em>masti</em><b>.</b></a><div className="me"><div className="avatar">{profile?.name?.[0]}</div><div><b>{profile?.name}</b><small>{profile?.interests?.slice(0,2).join(" · ")}</small></div></div><nav><button className={view==="lobby"||view==="matching"?"active":""} onClick={()=>{leaveQueue();setView("lobby")}}>✦ Discover</button><button onClick={requestNotifications}>♟ Notifications</button><button onClick={()=>signOut(auth)}>↪ Sign out</button></nav><small className="safety-note">Your comfort comes first.<br />Report or leave any conversation.</small></aside><section className="app-main">{view === "lobby" || view === "matching" ? <div className="lobby"><div className="orb">✦</div><p className="tag">READY WHEN YOU ARE</p><h1>{view === "matching" ? "Looking for your next good conversation…" : <>Your kind of <em>people</em> are out there.</>}</h1><p>{view === "matching" ? "We’re checking the room for someone with your vibe." : "Tell us when you’re ready and we’ll introduce you to someone new."}</p>{view === "matching" ? <button className="secondary" onClick={leaveQueue}>Cancel search</button> : <button className="primary" onClick={startMatching}>Find someone to chat with →</button>}<div className="interest-row">{profile?.interests?.map(x=><span key={x}>#{x}</span>)}</div></div> : <div className="chat"><header><button className="back" onClick={()=>{unsubMessages.current?.();setView("lobby")}}>←</button><div className="avatar">{match?.name?.[0]}</div><div><b>{match?.name}</b><small>New conversation · be kind</small></div><div className="chat-actions"><button onClick={startCall}>◉ Video call</button><button onClick={()=>setReporting(true)}>•••</button></div></header><div className="messages"><p className="system">You matched! Say hello and see where it goes.</p>{messages.map(m=><div className={m.senderId===user.uid?"message mine":"message"} key={m.id}>{m.imageUrl?<img src={m.imageUrl} alt="Shared in chat" />:<span>{m.text}</span>}<small>{m.createdAt?.toDate ? m.createdAt.toDate().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : now()}</small></div>)}</div><form className="composer" onSubmit={send}><label className="upload">＋<input type="file" accept="image/*" onChange={upload}/></label><input value={text} onChange={e=>setText(e.target.value)} placeholder="Say something nice…" /><button className="send" aria-label="Send">↑</button></form></div>}</section>{reporting&&<div className="modal"><div><button className="close" onClick={()=>setReporting(false)}>×</button><p className="tag">SAFETY FIRST</p><h2>What happened?</h2><button onClick={()=>report("Inappropriate content")}>Inappropriate content</button><button onClick={()=>report("Harassment or bullying")}>Harassment or bullying</button><button onClick={()=>report("Spam or scam")}>Spam or scam</button><button className="danger" onClick={block}>Block this person</button></div></div>}{call&&<div className="call"><video ref={remoteVideo} autoPlay playsInline/><video ref={localVideo} autoPlay muted playsInline className="local-video"/><button onClick={endCall}>End call</button></div>}{notice&&<div className="toast">{notice}</div>}</div>;
+}

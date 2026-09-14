@@ -21,7 +21,7 @@ export default function Home() {
       <a className="logo" href="#home"><span>bolo</span>masti<span className="dot">.</span></a>
       <div className={menu ? "navlinks open" : "navlinks"}>
         <a href="#how">How it works</a><a href="#safety">Safety</a><a href="#stories">Stories</a>
-        <a className="nav-cta" href="#join">Start chatting <Arrow /></a>
+        <a className="nav-cta" href="/connect">Start chatting <Arrow /></a>
       </div>
       <button className="menu" aria-label="Toggle menu" onClick={() => setMenu(!menu)}><i></i><i></i></button>
     </nav>
@@ -31,7 +31,7 @@ export default function Home() {
         <p className="eyebrow"><Spark /> A little hello can change your day</p>
         <h1>Meet new people.<br /><em>Feel more you.</em></h1>
         <p className="hero-text">Real conversations with people who get your vibe. No pressure, no pretending — just good masti.</p>
-        <div className="hero-actions"><a href="#join" className="button">Start chatting <Arrow /></a><a href="#how" className="text-link">See how it works <span>↓</span></a></div>
+        <div className="hero-actions"><a href="/connect" className="button">Start chatting <Arrow /></a><a href="#how" className="text-link">See how it works <span>↓</span></a></div>
         <div className="faces"><div className="avatars"><b>NK</b><b>SP</b><b>RM</b><b>AK</b></div><p><strong>50,000+</strong><br />people are talking today</p></div>
       </div>
       <div className="hero-art" aria-label="Illustration of a happy video chat">
@@ -57,7 +57,7 @@ export default function Home() {
 
     <section className="faq" id="faq"><p className="eyebrow coral">CURIOUS? WE GOT YOU.</p><h2>Questions, <em>answered.</em></h2><div className="faq-list">{questions.map(([q,a],i)=><div className={open===i?"faq-item active":"faq-item"} key={q}><button onClick={()=>setOpen(open===i?null:i)}>{q}<span>{open===i?"−":"+"}</span></button>{open===i&&<p>{a}</p>}</div>)}</div></section>
 
-    <section className="join" id="join"><span className="float flower">✿</span><span className="float smile">☻</span><p className="eyebrow">YOUR NEXT GOOD CONVERSATION IS WAITING</p><h2>Come as you are.<br /><em>Stay for the masti.</em></h2><a className="button light" href="mailto:hello@bolomasti.in">Join BoloMasti <Arrow /></a><p className="fine">By joining, you agree to lead with kindness. Always.</p></section>
+    <section className="join" id="join"><span className="float flower">✿</span><span className="float smile">☻</span><p className="eyebrow">YOUR NEXT GOOD CONVERSATION IS WAITING</p><h2>Come as you are.<br /><em>Stay for the masti.</em></h2><a className="button light" href="/connect">Join BoloMasti <Arrow /></a><p className="fine">By joining, you agree to lead with kindness. Always.</p></section>
     <footer className="footer"><a className="logo" href="#home"><span>bolo</span>masti<span className="dot">.</span></a><p>Made with a little bit of masti in India ✦</p><div><a href="#safety">Safety</a><a href="#faq">FAQ</a><a href="mailto:hello@bolomasti.in">Contact</a></div></footer>
   </main>;
 }
