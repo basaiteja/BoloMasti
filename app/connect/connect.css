@@ -1,4 +1,5 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono&family=DM+Sans:wght@400;500;700&family=Playfair+Display:ital,wght@0,700;1,700&display=swap');
+.auth-form{width:280px;margin:0 auto}.auth-form input{width:100%;border:1px solid #d8d9d2;background:#fffdf9;border-radius:9px;padding:12px;margin:5px 0;outline-color:#8171f5;font-size:14px}.auth-form .primary{width:100%;margin:10px 0 8px}.google{margin-top:0!important}.switch-auth{border:0;background:transparent;color:#526057;font-size:12px;text-decoration:underline;cursor:pointer;margin:14px auto 0!important}.primary:disabled{opacity:.65;cursor:wait}
 /* Phone-first refinements: short header, generous tap targets, keyboard-safe chat. */
 @media(max-width:650px){
   body .welcome{padding:22px 20px!important;background:radial-gradient(circle at 88% 17%,#ffda67 0 9%,transparent 9.5%),var(--cream)!important}
