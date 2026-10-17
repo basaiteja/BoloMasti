@@ -6,6 +6,24 @@ service cloud.firestore {
     function member(conversationId) {
       return signedIn() && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.members;
     }
+    function canMarkQueueMatch(uid) {
+      return signedIn()
+        && request.resource.data.status == 'matched'
+        && request.resource.data.matchId is string
+        && queueMatchIsValid(uid, request.resource.data.matchId);
+    }
+    function queueMatchIsValid(uid, conversationId) {
+      let conversation = get(/databases/$(database)/documents/conversations/$(conversationId));
+      let ownQueue = get(/databases/$(database)/documents/matchQueue/$(request.auth.uid));
+      return resource.data.uid == uid
+        && resource.data.status == 'waiting'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'matchId'])
+        && ownQueue.data.status == 'waiting'
+        && conversation.data.members is list
+        && conversation.data.members.size() == 2
+        && request.auth.uid in conversation.data.members
+        && uid in conversation.data.members;
+    }
 
     match /users/{uid} {
       allow read: if signedIn();
@@ -14,7 +32,8 @@ service cloud.firestore {
     }
     match /matchQueue/{uid} {
       allow read: if signedIn();
-      allow create, update, delete: if isSelf(uid);
+      allow create, delete: if isSelf(uid);
+      allow update: if isSelf(uid) || canMarkQueueMatch(uid);
     }
     match /conversations/{conversationId} {
       allow read: if signedIn() && request.auth.uid in resource.data.members;
