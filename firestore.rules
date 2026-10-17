@@ -29,6 +29,18 @@ service cloud.firestore {
       allow read: if signedIn();
       allow create, update: if isSelf(uid);
       allow delete: if false;
+      match /following/{followedUid} {
+        allow read: if signedIn();
+        allow create: if isSelf(uid) && request.resource.data.uid == followedUid;
+        allow delete: if isSelf(uid);
+        allow update: if false;
+      }
+      match /followers/{followerUid} {
+        allow read: if signedIn();
+        allow create: if isSelf(followerUid) && request.resource.data.uid == followerUid;
+        allow delete: if isSelf(followerUid);
+        allow update: if false;
+      }
     }
     match /matchQueue/{uid} {
       allow read: if signedIn();
@@ -49,6 +61,35 @@ service cloud.firestore {
     match /reports/{reportId} {
       allow create: if signedIn() && request.resource.data.reporterId == request.auth.uid;
       allow read, update, delete: if false;
+    }
+    match /posts/{postId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.authorId == request.auth.uid
+        && request.resource.data.photoURL is string;
+      allow update, delete: if signedIn() && resource.data.authorId == request.auth.uid;
+      match /likes/{uid} {
+        allow read: if signedIn();
+        allow create: if isSelf(uid) && request.resource.data.uid == uid;
+        allow delete: if isSelf(uid);
+        allow update: if false;
+      }
+      match /comments/{commentId} {
+        allow read: if signedIn();
+        allow create: if signedIn()
+          && request.resource.data.authorId == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 500;
+        allow delete: if signedIn()
+          && (resource.data.authorId == request.auth.uid
+            || get(/databases/$(database)/documents/posts/$(postId)).data.authorId == request.auth.uid);
+        allow update: if false;
+      }
+    }
+    match /callLogs/{uid}/items/{logId} {
+      allow read, create, update: if isSelf(uid);
+      allow delete: if false;
     }
     match /calls/{conversationId} {
       allow read, create, update: if member(conversationId);
