@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { RecaptchaVerifier, createUserWithEmailAndPassword, onAuthStateChanged, reload, sendEmailVerification, signInWithEmailAndPassword, signInWithPhoneNumber, signOut } from "firebase/auth";
 import { addDoc, collection, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
@@ -11,6 +12,8 @@ const interests = ["Music", "Movies", "Gaming", "Food", "Travel", "Books", "Fitn
 const now = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 export default function Connect() {
+  const pathname = usePathname();
+  const router = useRouter();
   const [user, setUser] = useState(null), [profile, setProfile] = useState(null), [view, setView] = useState("loading");
   const [form, setForm] = useState({ name: "", bio: "", interests: [] });
   const [authMode, setAuthMode] = useState("signin"), [loginMethod, setLoginMethod] = useState("email"), [email, setEmail] = useState(""), [password, setPassword] = useState(""), [phone, setPhone] = useState(""), [otp, setOtp] = useState(""), [otpSent, setOtpSent] = useState(false), [authBusy, setAuthBusy] = useState(false), [verificationError, setVerificationError] = useState("");
@@ -24,17 +27,22 @@ export default function Connect() {
     if (!firebaseReady || !auth) { setView("setup"); return; }
     return onAuthStateChanged(auth, async (next) => {
       setUser(next || null);
-      if (!next) return setView("welcome");
+      if (!next) {
+        setView("welcome");
+        if (pathname === "/connect") router.replace("/login");
+        return;
+      }
+      if (pathname === "/login") router.replace("/connect");
       if (next.providerData.some(p => p.providerId === "password") && !next.emailVerified) return setView("verifyEmail");
       try {
         const snap = await getDoc(doc(db, "users", next.uid));
         if (snap.exists()) { setProfile(snap.data()); setView("lobby"); } else setView("profile");
-      } catch {
-        say("Signed in, but Firestore is unavailable. Enable Firestore Database and publish its rules.");
-        setView("profile");
+      } catch (error) {
+        console.error("BoloMasti profile read failed", error);
+        setView("firestoreError");
       }
     });
-  }, []);
+  }, [pathname, router]);
   useEffect(() => () => { queueRef.current?.(); unsubMessages.current?.(); peer.current?.close(); }, []);
   useEffect(() => {
     if (!match) return;
@@ -53,7 +61,13 @@ export default function Connect() {
   const saveProfile = async (e) => {
     e.preventDefault(); if (!form.name.trim() || !form.interests.length) return say("Add a name and at least one interest.");
     const data = { uid: user.uid, name: form.name.trim(), bio: form.bio.trim(), interests: form.interests, photoURL: user.photoURL || "", createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
-    await setDoc(doc(db, "users", user.uid), data, { merge: true }); setProfile({ ...data, createdAt: new Date() }); setView("lobby");
+    try {
+      await setDoc(doc(db, "users", user.uid), data, { merge: true });
+      setProfile({ ...data, createdAt: new Date() }); setView("lobby");
+    } catch (error) {
+      console.error("BoloMasti profile write failed", error);
+      say(error.code === "permission-denied" ? "Firestore denied the profile save. Check the published Firestore rules for this Firebase project." : "Could not save your profile. Check your connection and try again.");
+    }
   };
   const toggleInterest = (value) => setForm(f => ({ ...f, interests: f.interests.includes(value) ? f.interests.filter(i => i !== value) : [...f.interests, value] }));
   const leaveQueue = async () => { queueRef.current?.(); queueRef.current = null; await setDoc(doc(db, "matchQueue", user.uid), { status: "left", updatedAt: serverTimestamp() }, { merge: true }); setView("lobby"); };
@@ -84,6 +98,7 @@ export default function Connect() {
   const endCall = () => { peer.current?.getSenders().forEach(s => s.track?.stop()); peer.current?.close(); peer.current = null; setCall(false); };
 
   if (view === "loading") return <div className="screen loading">Loading BoloMasti…</div>;
+  if (view === "firestoreError") return <div className="screen welcome"><a className="brand" href="/">bolo<em>masti</em><b>.</b></a><div className="welcome-card"><p className="tag">PROFILE COULD NOT LOAD</p><h1>We can’t open your <em>profile yet.</em></h1><p>You’re signed in, but Firestore denied access to your profile. Check the published Firestore rules in the Firebase project configured for this site.</p><button className="primary" onClick={() => window.location.reload()}>Try again</button><button className="switch-auth" onClick={() => signOut(auth)}>Sign out</button></div></div>;
   if (incomingCall && !call) return <div className="screen welcome"><a className="brand" href="/">bolo<em>masti</em><b>.</b></a><div className="welcome-card"><p className="tag">INCOMING VIDEO CALL</p><h1>{match?.name || "Someone"} wants to <em>talk.</em></h1><p>Accept only when you’re ready. You can end the call at any time.</p><button className="primary" onClick={answerCall}>Accept call</button><button className="secondary" onClick={()=>setIncomingCall(false)}>Decline</button></div></div>;
   if (view === "setup") return <div className="screen welcome"><a className="brand" href="/">bolo<em>masti</em><b>.</b></a><div className="welcome-card"><p className="tag">ONE SMALL SETUP STEP</p><h1>Firebase needs<br /><em>your Netlify variables.</em></h1><p>Add the six <code>NEXT_PUBLIC_FIREBASE_…</code> variables in Netlify, then redeploy this site.</p><a className="primary" href="/">Back to home</a></div></div>;
   if (view === "verifyEmail") return <div className="screen welcome"><a className="brand" href="/">bolo<em>masti</em><b>.</b></a><div className="welcome-card"><p className="tag">ONE LAST STEP</p><h1>Check your <em>email.</em></h1><p>We sent a verification link to <strong>{user?.email}</strong>. Open it, then return here to continue.</p><button className="primary" onClick={finishVerification}>I’ve verified my email</button><button className="switch-auth" onClick={resendVerification}>Resend verification link</button><button className="switch-auth" onClick={()=>signOut(auth)}>Use a different account</button></div></div>;
